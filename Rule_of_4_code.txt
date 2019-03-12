@@ -1,0 +1,88 @@
+# Demonstration of "Rule of 4" - benefits and costs to using this strategy
+
+# Replicate results of randomization
+set.seed(28205)
+
+# Back to univariate regression model
+
+# Synthetic pay variable (logarithm of pay with mean $60,000 and SD $1500)
+pay = rnorm( 1000 , mean = log(60000) , sd = log(1500) )
+
+# "True" model simulating termination data from
+mu = invlogit(.025 - .02*pay)
+
+# Dummy termination variable to predict
+termed = rbinom(1000 , 1 , mu)
+
+# Wrap predictors and predicted variables into dataframe and examine
+dr4 = data.frame(termed , pay)
+
+# Estimate a logistic regression model
+glm_r4 = glm(termed ~ pay , data = dr4 , family = binomial)
+summary(glm_r4)
+
+# Formal conversion of logistic regression coefficients to probability scale
+invlogit( coef(glm_r4)[2] + coef(glm_r4)[1] ) - invlogit(coef(glm_r4)[1])
+
+# Dividing coefficient by 4
+coef(glm_r4)[2] / 4
+
+# Now change example to have an intercept of 2.1 rather than 0.1. What happens?
+# "True" model simulating termination data from
+mu = invlogit(2.1 - .02*pay)
+
+# Dummy termination variable to predict
+termed = rbinom(1000 , 1 , mu)
+
+# Wrap predictors and predicted variables into dataframe and examine
+dr42 = data.frame(termed , pay)
+
+# Estimate a logistic regression model
+glm_r42 = glm(termed ~ pay , data = dr42 , family = binomial)
+summary(glm_r42)
+
+# Formal conversion of logistic regression coefficients to probability scale
+invlogit( coef(glm_r42)[2] + coef(glm_r42)[1] ) - invlogit(coef(glm_r42)[1])
+
+# Dividing coefficient by 4
+coef(glm_r42)[2] / 4
+
+# Q.) Why did the "Rule of 4" fail here? 
+# A.) It didn't! The "Rule of 4" gives the MAXIMUM value that the effect of a one-unit change in the predictor can have 
+#     on the predicted probability of the outcome. This is located directly at the center of the logistic function.
+#     This also means that for cases where most data lies a long way from the middle of the logistic function
+#     the "Rule of 4" performs really poorly. Predictive data that lies a long way from the mean of data we want to 
+#     predict suffers from this problem. This also provides a good reason to mean-center predictors in a logistic
+#     regression function (See Gelman and Hill (2007) for a formal derivation of this principle).
+
+#----------------------------------------------------------#
+
+# Visualize the first and second logistic regressions with respect to their data.
+
+# Following plots rounded income (to nearest 10 and on log scale) against termed (0/1) as well as logistic model curve
+# and a dashed line at 50% model-predicted probability (where effect of pay is highest)
+plot( jitter(dr4$termed , amount = 0.025) ~ jitter(round(dr4$pay,-1)) , cex = 0.5 , pch = 18 ,
+      xlab = "ln(pay)" , ylab = "Prob(termed)" ) 
+curve( invlogit(coef(glm_r4)[1] + coef(glm_r4)[2]*x) , add = TRUE )
+abline(h = 0.5 , lty = 2)
+
+# Expand plot to see shape of model a bit better
+plot( jitter(dr4$termed , amount = 0.025) ~ jitter(round(dr4$pay,-1)) , cex = 0.5 , pch = 18 , xlim = c(-30 , 60) ,
+      xlab = "ln(pay)" , ylab = "Prob(termed)") 
+curve( invlogit(coef(glm_r4)[1] + coef(glm_r4)[2]*x) , add = TRUE )
+abline(h = 0.5 , lty = 2)
+
+# Now take a look at other model (with intercept of 2.1 vs. 0.025)
+
+# Following plots rounded income (to nearest 10 and on log scale) against termed (0/1) as well as logistic model curve
+# and a dashed line at 50% model-predicted probability (where effect of pay is highest)
+plot( jitter(dr42$termed , amount = 0.025) ~ jitter(round(dr42$pay,-1)) , cex = 0.5 , pch = 18 , 
+      xlab = "ln(pay)" , ylab = "Prob(termed)" )
+curve( invlogit(coef(glm_r42)[1] + coef(glm_r42)[2]*x) , add = TRUE )
+abline(h = 0.5 , lty = 2)
+
+# Expand plot to see shape of model a bit better (and where maximum effect is)
+plot( jitter(dr42$termed , amount = 0.025) ~ jitter(round(dr42$pay,-1)) , cex = 0.5 , pch = 18 , xlim = c(-10 , 1100) ,
+      xlab = "ln(pay)" , ylab = "Prob(termed)" ) 
+curve( invlogit(coef(glm_r42)[1] + coef(glm_r42)[2]*x) , add = TRUE )
+abline(h = 0.5 , lty = 2)

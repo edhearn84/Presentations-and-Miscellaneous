@@ -1,0 +1,283 @@
+---
+title: "Intro to Stan for Economists"
+output: html_notebook
+---
+
+Stan model comprised of code blocks. "data", "parameters", and "model" blocks must be present in all Stan programs. 
+
+Order of Stan program:
+
+* functions - define functions to use in code blocks
+* data - declares data
+* transformed data - make transformations of data passed above
+* parameters - defines unknowns to be estimated
+* transformed parameters - often preferable to transform parameters
+* model - full probability model defined here
+* generated quantities - generates range of outputs from the model, e.g. posterior predictions, forecasts, values of loss functions, etc.)
+
+# Simulate model
+
+```{r}
+
+rm(list = ls())
+
+# Load necessary libraries and set up multi-core processing
+options(warn = -1 , message = -1)
+library(tidyverse)
+library(rstan)
+options(mc.cores = parallel::detectCores())
+theme_set(theme_bw())
+
+```
+
+Define data generating process in independent ".stan" file.
+
+Notice:
+
+* Stan writes C++ programs which requires static typing
+* All random number generators in Stan are distribution names followed by "_rng"
+
+Generate some values for the data and parameters with dgp function in Stan code.
+
+```{r}
+
+# Matrix of random numbers, values for beta, nu, and sigma
+
+set.seed(42)
+N = 1000                          # Number of observations
+P = 10                            # Number of parameters
+X = matrix( rnorm(N*P) , N , P )  # Generate NxP covariate matrix 
+nu = 5                            # Set degrees of freedom
+sigma = 5                         # Set scale parameter
+beta = rnorm(10)                  # Generate some random coefficients for recovery
+
+# Ensure first element of beta is positive as in our chosen DGP
+beta[1] = abs( beta[1] )
+
+```
+
+Compile Stan script using "stan_model()" and then make function available to R using "expose_stan_functions()"
+
+```{r}
+
+compiled_function = stan_model( file = "~/Desktop/R Codes/intro_stan_econ_rng_fnct.stan")
+
+expose_stan_functions(compiled_function)
+
+```
+
+dgp_rng now available in R, so can use it to generate fake data.
+
+```{r}
+
+# Draw vector of random numbers for knowns Xs and parameters
+y_sim = dgp_rng(nu = nu , X = X , sigma = sigma , beta = beta)
+
+# Plot data
+tibble(y_sim = y_sim) %>%
+  ggplot( aes(x = y_sim) ) +
+  geom_histogram(binwidth = 3)
+
+```
+
+# Estimate simulated model
+
+Two candidate models: specify both in Stan and estimate them.
+
+First (incorrect) model assumes a normal distribution. 
+Also inefficient b/c assumes that beta1 can be anything (might have reason to constrain beta1) 
+
+Estimate the two models (incorrect and correct) with the y and X previously simulated.
+
+```{r}
+
+# Specify data list to pass to Stan (laid out in data block)
+data_list = list( N = N , P = P , X = X , y = y_sim )
+
+incorrect_fit = stan(file = "~/Desktop/R Codes/intro_stan_econ_incorrect_model.stan" ,
+                     data = data_list)
+
+correct_fit = stan(file = "~/Desktop/R Codes/intro_stan_econ_correct_model.stan" , 
+                   data = data_list)
+
+```
+
+Fitted Stan object contains draws for every parameter. If model fit correctly, these are from the posterior distribution.
+
+These are draws from a joint distribution; correlation between parameters will be present in the joint posterior even if it was not present in the priors. 
+
+Also, generated quantities block contains two more variables:
+
+* log_lik - log-likelihood for model comparison; N*(iter total) values
+* y_hat - posterior predictive draw. For each parameters, this is a plausible value of corresponding y from           the data model. Now, each observation has its own predictive distribution accounting for both              regression residual and uncertainty in the parameter estimates.
+
+
+Still premature to generate inferences from our fitted models.
+
+Questions to ask at this stage:
+
+* Did the estimates of the posterior distribution converge?
+* Were there any other problems in the model fitting?
+* Which model is better?
+
+# Checking model fit with shinystan
+
+Check model results with shinystan for:
+
+* Lack of chain mixing
+* Stationarity 
+* Autocorrelation
+* Divergent transitions
+
+```{r}
+
+# Will open new Chrom tab with visualized model results
+shinystan::launch_shinystan(correct_fit)
+
+```
+
+# Comparing models
+
+First, check model outputs.
+
+```{r}
+
+# Specify parameter values to avoid huge output matrices include y_hat and log_lik
+print( incorrect_fit , par = c("beta" , "sigma") ) 
+print( correct_fit , par = c("beta" , "sigma" , "nu") )
+
+```
+
+```{r}
+
+# Declare a data frame that contains the known parameter names in one column `variable` and their known values
+known_parameters = tibble(variable = c(paste0("beta[",1:P,"]"),"sigma", "nu"), real_value = c(beta, sigma, nu))
+
+extract( correct_fit , permuted = FALSE , pars = c("beta" , "sigma" , "nu") ) %>%
+  plyr::adply(2) %>%
+  select(-chains) %>%
+  gather(key = "variable") %>%
+  left_join( known_parameters , by = "variable" ) %>%
+  ggplot( aes(x = value) ) +
+  geom_density(fill = "orange" , alpha = 0.5) +
+  facet_wrap(~ variable , scales = "free") +
+  geom_vline( aes(xintercept = real_value) , color = "red" ) +
+  ggtitle( "Actual parameters and estimates\ncorrectly specified model\n" )
+
+```
+
+```{r}
+
+# Declare a data frame that contains the known parameter names in one column `variable` and their known values
+known_parameters = tibble(variable = c(paste0("beta[",1:P,"]"),"sigma"), real_value = c(beta, sigma))
+
+extract( incorrect_fit , permuted = FALSE , pars = c("beta" , "sigma") ) %>%
+  plyr::adply(2) %>%
+  select(-chains) %>%
+  gather(key = "variable") %>%
+  left_join( known_parameters , by = "variable" ) %>%
+  ggplot( aes(x = value) ) +
+  geom_density(fill = "orange" , alpha = 0.5) +
+  facet_wrap(~ variable , scales = "free") +
+  geom_vline( aes(xintercept = real_value) , color = "red" ) +
+  ggtitle( "Actual parameters and estimates\nincorrectly specified model\n" )
+
+```
+
+Both models do a reasonable decent job at recapturing coefficients
+But, normal model's sigma parameter is way off
+
+Makes sense: a t-distributed model has fat tails, and normal will try and capture this with wider variance.
+
+How else can we compare our two models?
+
+Use leave-one-out cross-validation via loo package.
+
+```{r}
+
+library(loo)
+
+# Extract log-likelihoods of both models
+llik_incorrect = extract_log_lik(incorrect_fit , parameter_name = "log_lik")
+llik_correct = extract_log_lik(correct_fit , parameter_name = "log_lik")
+
+# Estimate the leave-one-out cross-validation error
+loo_incorrect = loo(llik_incorrect)
+loo_correct = loo(llik_correct)
+
+# Print LOO statistics
+print(loo_incorrect)
+print(loo_correct)
+
+# Print the comparison between the two models
+print( compare(loo_incorrect , loo_correct) )
+
+```
+
+elpd_loo is expected log pointwise predictive density, a rough analogy to log likelihood of a model.
+
+p_loo gives effective number of parameters. 
+
+Can multiply the elpd_loo by -2 to calculate looic, which is akin to AIC/BIC.
+(For more on this metric, see this link: https://arxiv.org/abs/1507.04544)
+
+elpd_diff gives us expected difference in log posterior density between the two models.
+
+Positive value indicates more plausible predictions from second vs. first model.
+
+# Generating posterior predictions
+
+Use model to produce predictions.
+
+Posterior predictions are constructed by:
+
+* Drawing a set of parameters, theta_draw, from the posterior distribution
+* For each observation i, draw a value, y_sim_i, from p(y | theta_draw, X_i)
+* Repeat for all parameter draws
+
+For each data point, we end up with as many plausible outcomes as we have draws from the posterior. 
+
+These draws take into account both the expected variation in the data model and also our posterior uncertainty. 
+
+```{r}
+
+known_y = tibble( variable = paste0("y_sim[",1:N,"]"), real_y = y_sim )
+
+plot_data = extract( correct_fit , permuted = FALSE , pars = c("y_sim") ) %>%
+  plyr::adply(2) %>%
+  select(-chains) %>%
+  gather(key = "variable") %>%
+  left_join(known_y , by = "variable") %>%
+  group_by(variable) %>%
+  summarize( median = median(value) ,
+             lower = quantile(value , 0.025) ,
+             upper = quantile(value , 0.975) ,
+             actual = first(real_y) )
+
+plot_data
+
+```
+
+Overlay distribution as 95% predictive intervals on to actual data
+
+```{r}
+
+plot_data %>%
+    ggplot( aes(x = median) ) + 
+    geom_point( aes(y = actual) ) +
+    geom_ribbon( aes(ymin = lower, ymax = upper) , fill = "orange" , alpha = 0.5 ) + 
+    geom_line( aes(y = median) ) +
+    ggtitle("Actual outcomes and 95% posterior predictive interval\n")
+
+```
+
+Can compute the proportion of y_real that lay within the 95% posterior predictive interval
+
+```{r}
+
+plot_data %>%
+  summarize( prop_within_95_pc = mean(actual >= lower & actual <= upper) )
+
+```
+
+Note: If estimate generalised linear models and varying-intercept, varying-slope models, use "rstanarm" package. This package uses Stan in the back-end, but does not require the user to write Stan models.

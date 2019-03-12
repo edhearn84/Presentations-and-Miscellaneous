@@ -1,0 +1,165 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+
+rm(list = ls())
+
+library(tidyverse)
+library(arm)
+library(car)
+
+```
+
+Create dummy data for regression.
+
+```{r}
+
+# Number of observations in dummy data
+n = 250
+
+# Independent variables
+x1 = rnorm(n , 0 , 2)
+x2 = rnorm(n , 0 , 3)
+x3 = rnorm(n , 0 , 0.5)
+x4 = rnorm(n , 0 , 2)
+x5 = rnorm(n , 0 , 1)
+
+# Set parameter values
+b0 = 0
+b1 = 0.5
+b2 = 0.2
+b3 = 0.8
+b4 = 0.7
+b5 = 0.9
+
+# Dummy model
+y = b0 + b1*x1 + b2*x2 + b3*x3 + b4*x4 + b5*x5 + rnorm(n,0,1)
+
+# Wrap all results into dataframe
+data = data.frame( cbind(y , x1 , x2 , x3 , x4 , x5) )
+data_std = data.frame(apply(data , 2 , scale))
+
+```
+
+Sample code to achieve individual slopes across all metrics via a multiple linear regression.
+
+```{r}
+
+model = lm(y ~ x1 + x2 + x3 + x4 + x5 , data = data_std)
+
+summary(model)
+
+```
+
+Residual plot to see how model performs.
+
+```{r}
+
+plot(y = model$residuals , x = model$fitted.values , cex = 0.25 , 
+     xlab = "predicted y" , ylab = "residuals" , main = "Residuals vs predicted data")
+abline( h = 0 )
+abline( h = c(-1,1) , lty = 2 )
+
+```
+
+Add simulations to plot of predicted y on actual y to see noise in estimation.
+
+```{r}
+
+sim_model = sim(model)
+
+preds = as.matrix(data_std) %*% t(coef(sim_model))
+
+plot(y = data_std$y , x = model$fitted.values , cex = 0.25 , 
+     xlab = "predicted y" , ylab = "actual y" , main = "Model predicted data vs actual outcomes")
+for(i in 1:10){
+  modl = lm(data_std$y ~ preds[,i])
+  abline( coef(modl)[1] , coef(modl)[2] , col = "gray")
+}
+abline(0,1)
+
+```
+
+Partial regression plots (visualize the indepdendent effect of each coefficient)
+
+```{r}
+
+avPlots(model = model , cex = 0.25 , id = FALSE , grid = FALSE)
+
+```
+
+Fake data simulation a la Gelman and Hill Chapter 8 for comparison of dummy data to "actual" data
+
+```{r}
+
+# Simulate parameter esimtates from 1000 models
+n.sims = 1000
+sim.dummy = sim(model , n.sims)
+
+model_matrix = as.matrix(cbind( rep(1,nrow(data_std)) , data_std[,-1]))
+
+# Use above simulated parameter values to create 1000 fake data sets of 250 predicted y values each
+n = nrow(data_std)
+y.rep = array( NA , c(n.sims,n) )
+for( s in 1:n.sims ){
+  y.rep[s,] = rnorm(n , mean = model_matrix %*% matrix(coef(sim.dummy)[i,]) , sd = sigma.hat(sim.dummy)[i] )
+}
+
+```
+
+Functionalize above dataset simulation
+
+```{r}
+
+sims_linear_reg = function(df , model , nsims = 1000) {
+  
+  # Simulate parameter esimtates from 1000 models
+  sim.dummy = sim(model , nsims)
+  model_matrix = as.matrix(cbind( rep(1,nrow(df)) , df[,-1]))
+
+  # Use above simulated parameter values to create 1000 fake data sets of predicted y values from specified model
+  n = nrow(df)
+  y.rep = array( NA , c(nsims,n) )
+  for( s in 1:nsims ){
+    y.rep[s,] = rnorm(n , mean = model_matrix %*% matrix(coef(sim.dummy)[i,]) , sd = sigma.hat(sim.dummy)[i] )
+  }
+  return(y.rep)
+}
+
+# Run function to get 5000 
+sims = sims_linear_reg(df = data_std , model = model , nsims = 5000)
+
+# Plot histograms of 10 of these predicted y values to compare with "actual" y values in original data
+par(mfrow = c(3,4))
+hist(data_std$y , yaxt = "n" , ylab = "" , xlab = "" , main = "Real" , breaks = 12 , xlim = c(-4,4))
+for(s in 1:10){
+  hist(sims[s,] , yaxt = "n" , ylab = "" , xlab = "" , main = paste0("Dummy ",s) , breaks = 12 , xlim = c(-4,4) )
+}
+
+```
+
+Use a test statistic to evaluate how well dummy data resembles true data
+
+Here, as in Gelman/Hill Ch. 8 light-speed example, will choose minimum
+
+```{r}
+
+# Set test function, in this case minimum (could also be maximum)
+Test = function(y){
+  min(y)
+}
+
+# Apply test function to all dummy data for y and chart in histogram (red dashed line is "actual" data minimum)
+hist( apply(sims , 1 , Test) , main = "Minima from dummy datasets" , breaks = 50 ,
+      xlab = "min(y)" , ylab = "" , yaxt = "n")
+abline(v = min(data_std$y) , lty = 2 , col = "red" )
+
+# Apply more formal test; neither TRUE nor FALSE in table below should fall below 5%
+mins = apply(sims , 1 , function(x) min(x) < min(data_std$y))
+table(mins) / length(mins)
+
+```
+

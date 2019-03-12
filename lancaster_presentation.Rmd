@@ -1,0 +1,441 @@
+---
+title: "Lancaster County Labor Market Over Time"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+author: "Edward McLeod Hearn, Ph.D."
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r , message = FALSE , echo = FALSE}
+
+rm(list = ls())
+
+library(tidyverse)
+library(readxl)
+library(lubridate)
+library(ggseas)
+library(dygraphs)
+
+theme_set(theme_bw())
+
+knitr::opts_chunk$set(echo = FALSE , warning = FALSE , fig.width = 9)
+
+```
+
+
+```{r}
+
+# Incorporate Excel of employment statistics for Lancaster MSA
+lanc_pa_unemp_stats = read_excel("~/Desktop/R Data/lanc_pa_unemp_stats.xlsx")
+pa_unemp_stats = read_excel("~/Desktop/R Data/pa_unemp_stats.xlsx")
+so_pa_unemp_stats = read_excel("~/Desktop/R Data/york_reading_harrisburg_data.xlsx")
+lanc_pa_industry_pcts_1017 = read_excel("~/Desktop/R Data/lanc_pa_industry_pcts_1017.xlsx")
+
+```
+
+### Interactive Figure Useage
+
+The time series cadence I've used throughout is monthly. Interactive series allow for a few details the user can alter at will:
+
+* Rolling average period
+    + Bottom left corner of time series; the user can change rolling period from default 12-month         roll to another period. 
+  
+* Dates window: 
+    + For statewide and Lancaster County comparison, I've used the full 01/1990 - 11/2018 series.
+    + In the second part of presentation, I switch to the post-recessionary period 01/2010 - 11/2018       for visual ease. 
+
+Users can change these windows in one of two ways: 
+
+1. The slider at the bottom of the series.
+2. Highlighting a secton of the series using the cursor. To return to the full series view,            simply double-click the series.
+    
+# State Comparisons
+
+Is Thomas Friedman right about Lancaster? Up until the early to mid-2000s, Friedman suggested in his article (https://www.nytimes.com/2018/07/03/opinion/community-revitalization-lancaster.html), that Lancaster was on the decline. It then experienced a turnaround. Was this pattern borne out in data on employment in Lancaster county?
+
+The following analyses of unemployment and labor force growth rates juxtapose Lancaster County with statewide figures.
+
+Please note that Lancaster County numbers are incorporated into state averages. Statewide numbers simply give a relative trend to see how Lancaster County measures up against Pennsylvania over time.
+
+``` {r}
+
+# Munge data and join for unified data frame:
+
+# Lancaster
+lanc_pa = lanc_pa_unemp_stats %>%
+  mutate( date = ymd( parse_date_time(lanc_pa_unemp_stats$Date , orders = "b y") ) ,
+          unemp_rate = `unemployment rate` / 100 ) %>%
+  rename( lab_force = `labor force` ,
+          empl_tot = employment , 
+          unemp_tot = unemployment ) %>%
+  select( date , everything() , -Period , -Year , -Date )
+
+
+# Pennsylvania
+pa = pa_unemp_stats %>%
+  mutate( date = ymd( parse_date_time(pa_unemp_stats$Date , orders = "b y") ) ,
+          unemp_rate_pa = `unemployment rate` / 100 ) %>%
+  rename( lab_force_pa = `labor force` ,
+          empl_tot_pa = employment , 
+          unemp_tot_pa = unemployment ) %>%
+  select( date , everything() , -Period , -Year , -Date )
+
+
+# Joined tibble - Lancaster and Pennsylvania data
+lancaster = lanc_pa %>%
+  full_join(pa , by = "date") %>%
+  select(date , lab_force , empl_tot , unemp_tot , unemp_rate , lab_force_pa , empl_tot_pa , unemp_tot_pa , unemp_rate_pa) %>%
+  mutate( log_lf = log(lab_force) ,
+          growth_lf = log_lf - lag(log_lf,1) ,
+          log_lf_pa = log(lab_force_pa) ,
+          growth_lf_pa = log_lf_pa - lag(log_lf_pa,1) )
+          
+```
+
+A fact to keep in mind is the relationship between the unemployment rate and the labor force:
+
+$UE Rate = (# Unemployed People) / (# of People in Labor Force)$
+
+#### Quick notes on BLS unemployment data
+
+The Bureau of Labor Statistics classifies individuals as employed if they have a job.
+
+BLS classifies individuals as unemployed if three conditions they fulfill three conditions:
+
+1. No job
+2. Actively sought work in last four weeks
+3. Currently available to work
+
+If a person violates any of these three conditions, they are not counted as part of the labor force.
+
+For more on what BLS is up to:
+https://www.bls.gov/cps/cps_htgm.htm#unemployed
+
+### Growth in labor forces: Lancaster County vs. Statewide
+
+Notice that there have only been a few continuous periods where Lancaster County's labor-force growth rate has been reliably lower than the statewide average.
+
+There are two periods of note: the post-1991 recessionary period and the post-2008 recessionary period.
+
+Expansionary periods in the labor force for Lancaster County are typically more prominent. Examples are 1990, the mid-to-late 1990s, the early-to-mid 2000s, and 2012-2016.
+
+```{r}
+
+# Specify time series to compare: Lancaster county and statewide
+lanc_county = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lancaster$growth_lf )
+state = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lancaster$growth_lf_pa )
+lf = cbind(lanc_county , state)
+
+# Dynamic time series with interval-rolling-average capability
+dygraph(lf , main = "Labor Force Growth Rate") %>%
+  dyAxis("y" , 
+         label = "" ,
+         valueFormatter = "function(v){return (v*100).toFixed(3) + '%'}" ,
+         axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}") %>%
+  dyAxis("y" , 
+         label = "" ,
+         valueFormatter = "function(v){return (v*100).toFixed(3) + '%'}" ,
+         axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}") %>%
+  dyRangeSelector() %>%
+  dyLegend(width = 500) %>%
+  dyRoller(rollPeriod = 12)
+
+```
+
+### Unemployment rates: Lancaster County vs. Statewide
+
+Twelve-month rolling averages of unemployment rates for Lancaster County are always below statewide unemployment rates. The distance between the two series widens or narrows depending on the period. This empirical relationship is true regardless of the rolling average period.
+
+Please note that Lancaster county monthly unemployment rates are not seasonally adjusted, while statewide rates are seasonally adjusted. Rolling averages also smooth out this discrepancy.
+
+```{r}
+
+# Specify time series to compare: Lancaster county and statewide
+lanc_county = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lancaster$unemp_rate )
+state = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lancaster$unemp_rate_pa )
+ue = cbind(lanc_county , state)
+
+# Dynamic time series with interval-rolling-average capability
+dygraph(ue , main = "Monthly Unemployment Rate") %>%
+  dyAxis("y" , 
+         label = "" ,
+         valueFormatter = "function(v){return (v*100).toFixed(1) + '%'}",
+         axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}") %>%
+  dyRangeSelector() %>%
+  dyLegend(width = 500) %>%
+  dyRoller(rollPeriod = 12)
+
+```
+
+We can look directly at the differences between state and county. Also, we can control for seasonality (in the county data) using a seasonal adjustment technique employed by Census.
+
+### Differences between state and Lancaster county unemployment rates
+
+Below charts the differences in state and Lancaster County unemployment rates. 
+
+* Gray lines - monthly differences
+* Black lines - seasonally adjusted differences
+* Blue line - smoothed trend for ease of visual inspection
+
+```{r , message = FALSE}
+
+lancaster %>%
+  mutate( ue_rate_diff = unemp_rate_pa - unemp_rate ) %>%
+  ggplot( aes(x = date , y = ue_rate_diff) ) +
+  geom_line( col = "gray" , alpha = 0.5 ) +
+  stat_seas(start = c(1990,1) , frequency = 12) +
+  geom_smooth(se = FALSE) +
+  theme( panel.grid = element_blank() ,
+         plot.title = element_text(hjust = 0.5 , face = "bold") ) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 0.1)) +
+  labs( title = "Monthly Unemployment Rate Differences:\n(Statewide) - (Lancaster County)" ,
+        x = "Month-of-Year" ,
+        y = "Difference" )
+
+```
+
+# Proximate MSA comparisons
+
+Let's examine a more similar area to Lancaster County: the areas that comprise nearby MSAs in southern Pennsylvania
+
+Three MSAs for comparison are:
+
+* Harrisburg-Carlisle
+* Reading 
+* York-Hanover
+
+```{r}
+
+so_pa = so_pa_unemp_stats %>%
+  mutate( date = ymd( parse_date_time(so_pa_unemp_stats$Date , orders = "b y") ) ,
+          unemp_rate = `unemployment rate` / 100 ) %>%
+  rename( lab_force = `labor force` ,
+          empl_tot = employment , 
+          unemp_tot = unemployment ) %>%
+  select( date , everything() , -Period , -Year , -Date )
+
+```
+
+We want to first compare growth rates in the labor forces of proximate MSAs.
+
+```{r , message = FALSE}
+
+lanc = lanc_pa %>%
+  mutate( loc = "Lancaster" )
+
+so_pa = so_pa %>%
+  bind_rows( lanc ) %>%   
+  mutate( log_lf = log(lab_force) ,
+          growth_lf = log_lf - lag(log_lf,1) )
+
+```
+
+I've confined the period to be the post-2008-recession period. The period started with January 2010 through to November 2018 (the last period the ACS has published non-altered figures for as of this presentation).
+
+Also, I've defaulted to rolling averages of these metrics over the past 12 months to tamp down on seasonal (monthly) fluctuations. 
+
+Again, all of this can be changed by the user!
+
+### Growth in labor forces: Lancaster County vs. Proximate MSAs
+
+A noticeable shift occurred after January 2012: Lancaster county labor-force growth rate goes from bottom to top of all other MSAs and generally stays there. 
+
+```{r}
+
+# Specify time series to compare: Lancaster county and statewide
+lanc_county = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$growth_lf[so_pa$loc == "Lancaster"] )
+harrisburg = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$growth_lf[so_pa$loc == "Harrisburg"] )
+reading = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$growth_lf[so_pa$loc == "Reading"] )
+york = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$growth_lf[so_pa$loc == "York"] )
+
+ue_so_pa = cbind(lanc_county , harrisburg , reading , york)
+
+# Functionalize graphic for four county MSAs above
+  dygraph(ue_so_pa , main = "Labor Force Growth Rate") %>%
+    dyAxis( "y" , 
+            label = "" ,
+            valueFormatter = "function(v){return (v*100).toFixed(2) + '%'}",
+            axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}" ) %>%
+    dyRangeSelector( dateWindow = c("2010-01-01", "2018-11-01") ) %>%
+    dyLegend( width = 550 ) %>%
+    dyRoller( rollPeriod = 12 ) %>%
+    dyHighlight( highlightCircleSize = 5, 
+                 highlightSeriesBackgroundAlpha = 0.2,
+                 hideOnMouseOut = TRUE ,
+                 highlightSeriesOpts = list(strokeWidth = 3) )
+
+```
+
+### Unemployment rates: Lancaster County vs. Proximate MSAs
+
+We can also take a look at unemployment in four nearby MSAs.
+
+```{r}
+
+# Specify time series to compare: Lancaster county and statewide
+lanc_county = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$unemp_rate[so_pa$loc == "Lancaster"] )
+harrisburg = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$unemp_rate[so_pa$loc == "Harrisburg"] )
+reading = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$unemp_rate[so_pa$loc == "Reading"] )
+york = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , 
+                  data = so_pa$unemp_rate[so_pa$loc == "York"] )
+
+ue_so_pa = cbind(lanc_county , harrisburg , reading , york)
+
+# Dynamic time series with interval-rolling-average capability
+dygraph(ue_so_pa , main = "Unemployment Rate") %>%
+  dyAxis( "y" , 
+          label = "" ,
+          valueFormatter = "function(v){return (v*100).toFixed(1) + '%'}",
+          axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}" ) %>%
+  dyRangeSelector( dateWindow = c("2010-01-01", "2018-11-01") ) %>%
+  dyLegend( width = 550 ) %>%
+  dyRoller( rollPeriod = 12 ) %>%
+  dyHighlight( highlightCircleSize = 5, 
+               highlightSeriesBackgroundAlpha = 0.2,
+               hideOnMouseOut = TRUE ,
+               highlightSeriesOpts = list(strokeWidth = 3) )
+
+```
+
+Lancaster's unemployment rate overtakes Harrisburg's starting in early 2011, and remains relatively lower than the other three MSAs for the remainder of the period. Also, the general decline in unemployment rate turns upward in 2017, and back downward at a mitigated rate relative to previous periods.
+
+# Lancaster County Specifics
+
+Let's zero in on Lancaster County and compare labor force growth with unemployment rates.
+
+```{r}
+
+# Need times series of LC unemployment rates and lf growth rates for comparison
+lanc_glf_ue = so_pa %>% filter(loc == "Lancaster")
+
+unemployment = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lanc_glf_ue$unemp_rate )
+lab_force_growth = ts( frequency = 12 , start = c(1990,1) , end = c(2018,11) , data = lanc_glf_ue$growth_lf )
+
+lc = cbind(lab_force_growth , unemployment)
+
+# Dynamic time series with interval-rolling-average capability
+dygraph(lc , main = "Lancaster County Rates Comparison") %>%
+  dyAxis("y" , 
+         label = "Labor Force Growth" ,
+         valueFormatter = "function(v){return (v*100).toFixed(3) + '%'}" ,
+         axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}") %>%
+  dyAxis("y2" , 
+         label = "Unemployment" ,
+         valueFormatter = "function(v){return (v*100).toFixed(2) + '%'}" ,
+         axisLabelFormatter = "function(v){return (v*100).toFixed(1) + '%'}") %>%
+  dySeries("unemployment" , axis = 'y2') %>%
+  dyRangeSelector( dateWindow = c("2010-01-01", "2018-11-01") ) %>%
+  dyLegend(width = 450) %>%
+  dyRoller(rollPeriod = 12)
+
+```
+
+If labor force is equal to the numbers of employed and unemployed persons, then an increase in the labor force's impact on unemployment could not be discerned without examining the relative proportion of employed to unemployed persons. 
+
+General trends from early 2011 to early 2016 were increases in labor force growth and declines in unemployment rate. This provides evidence that people were either rejoining the labor force and getting work or people were moving to Lancaster County for employment. 
+
+More problematically, from early 2016 up until mid-2018, labor force growth in Lancaster County trended strongly downward. The unemployment rate's general decline mitigated and then turned upward, and then back downward. These trends provide some evidence that individuals had increasing difficulty finding work which might have led despairing workers to drop out of the labor force altogether (that is, stopped looking for work). It might also be that individuals moved out of the area to pursue work elsewhere (although not in proximate MSAs, given the evidence in the previous section). 
+
+Happily, this trend has reversed itself dramatically over the second half of 2018. Labor force growth has spiked upward since April 2018 and the unemployment rate has continued its decline. Again, this indicates that individuals could be rejoining the labor force and quickly finding work and/or individuals are relocating to fill jobs they've gained in Lancaster County.   
+
+### Quick calculation: growth rates in population since 2009
+
+Another piece of evidence is evident upon examination of population totals and growth rates. If the population is expanding while the labor force is declining, then people are moving for reasons other than employment. In Lancaster County, there was a slow-down in population expansion preceding the drop in labor force growth in the above series. However, since 2017, the growth rate in population has expanded as has the growth rate in the labor force more recently. Again, these both coincide with decreases in Lancaster County's unemployment rate since 2017.
+
+```{r , eval = FALSE}
+
+pop = c(507814 , 520307 , 523786 , 526870 , 530149 , 533746 , 536534 , 539137 , 542903)
+growth_pop = log(pop) - lag(log(pop),1)
+
+growth_pop * 100
+
+```
+
+The following data come from the FRED database and are available on the St. Louis Federal Reserve website: https://fred.stlouisfed.org/series/PALANC0POP
+
+
+Year  | Lancaster County Population | Growth Rate 
+------|-----------------------------|------------
+2009  | 507,814                     | ---
+2010  | 520,307                     | 2.43%
+2011  | 523,786                     | 0.67%
+2012  | 526,870                     | 0.59%
+2013  | 530,149                     | 0.62%
+2014  | 533,746                     | 0.68%
+2015  | 536,534                     | 0.52%
+2016  | 539,137                     | 0.48%
+2017  | 542,903                     | 0.70%
+
+
+Note: Lancaster City's population has maintained itself at approximately 60,000 since the last Census. This will almost certainly be revised upward in the next Census (probably to around 62,000 or 63,000).
+
+Lancaster City represents roughly 11% of the county population. According to a Franklin and Marshall report, https://www.fandm.edu/uploads/files/57180730379654530-lancastereconomyreportaugust2015.pdf, the relative city-to-county population proportion has fallen in each decennial Census:
+
+Census Year  | Lancaster City to County Population Proportion
+------|-----------------------------------------------
+1950  | 37%                     
+1960  | 28%                
+1970  | 22%                     
+1980  | 18%                     
+1990  | 15%                     
+2000  | 14%                     
+2010  | 13%                    
+2017 (Estimated)  | 11%
+
+However, this proportional decline has slowed in more recent decades. 
+
+# Lancaster labor force proportions by industry
+
+Data come from the U.S. Department of the Census' American Community Survey (ACS) 5-year estimates. I accessed it via the Census' American FactFinder:
+https://factfinder.census.gov/faces/tableservices/jsf/pages/productview.xhtml?src=CF
+
+The bars chart how the proportions of the labor force across Lancaster County industries have changed over the past eight years.
+
+Please note that these proportions are rounded, so their sums will not be exactly 100%.
+
+```{r , fig.width=14 , fig.height=8}
+
+lanc_pa_industry_pcts_1017 %>%
+  gather(`2010`,`2011`,`2012`,`2013`,`2014`,`2015`,`2016`,`2017` , key = "Year" , value = "Pct") %>%
+  ggplot( aes(x = Year , y = Pct/100 , fill = Industry , label = Pct/100) ) +
+  geom_bar( stat = "identity" ) +
+  geom_text( position = position_stack(vjust = 0.5) , size = 4.5 , aes(label = paste0(Pct,"%")) ) +
+  scale_y_continuous( labels = scales::percent ) +
+  labs( title = "Proportion of labor force" , 
+        y = "" ,
+        x = "" ) +
+  theme( text = element_text(size = 16) ,
+         legend.position = "left")
+
+```
+
+
+The major changes are:
+
+* Declines
+    + Manufacturing (-1.8%) 
+    + Construction (-0.7%)
+    + Wholesale Trade (-0.7%)
+
+* Increases
+    + Arts, Entertainment, et.al. (+1.1%) 
+    + Professional, Scientific, et. al. (+1.0%) 
+    + Education Services (+1.7%)
+
+
+### Appendix: Example Jobs by Industry
+
+Jobs that fall under some of the above industrial classifications might not be obvious. Below are some examples of these jobs within industries:
+
+* Information - cable installers, satellite-provider installers
+* Wholesale trade - business-to-business sales, raw material sales
+* Profession services, etc. - lawyer, accountant
+* Other services - repair people, laundry/cleaning services
